@@ -9,15 +9,21 @@ type VirtualAddress = usize;
 
 struct MapEntry {
     source: Arc<dyn DataSource>,
-    offset: usize,
+    offset: usize, //
     span: usize,
-    addr: usize,
-    flags: FlagBuilder
+    addr: usize, //
+    flags: FlagBuilder,
 }
 
 impl MapEntry {
     #[must_use] // <- not using return value of "new" doesn't make sense, so warn
-    pub fn new(source: Arc<dyn DataSource>, offset: usize, span: usize, addr: usize, flags: FlagBuilder) -> MapEntry {
+    pub fn new(
+        source: Arc<dyn DataSource>,
+        offset: usize,
+        span: usize,
+        addr: usize,
+        flags: FlagBuilder,
+    ) -> MapEntry {
         MapEntry {
             source: source.clone(),
             offset,
@@ -68,8 +74,10 @@ impl AddressSpace {
         span: usize,
         flags: FlagBuilder,
     ) -> Result<VirtualAddress, &str> {
+        // addr_iter points to the end position of the previous mapping
         let mut addr_iter = PAGE_SIZE; // let's not map page 0
         let mut gap;
+        // find the first place that has enough space for the mapping
         for mapping in &self.mappings {
             gap = mapping.addr - addr_iter;
             if gap > span + 2 * PAGE_SIZE {
@@ -77,10 +85,12 @@ impl AddressSpace {
             }
             addr_iter = mapping.addr + mapping.span;
         }
+        // check if there is enough space for the mapping
         if addr_iter + span + 2 * PAGE_SIZE < VADDR_MAX {
             let mapping_addr = addr_iter + PAGE_SIZE;
             let new_mapping = MapEntry::new(source, offset, span, mapping_addr, flags);
             self.mappings.push(new_mapping);
+            // lambda function to sort the mappings by address
             self.mappings.sort_by(|a, b| a.addr.cmp(&b.addr));
             return Ok(mapping_addr);
         }
@@ -97,9 +107,57 @@ impl AddressSpace {
         offset: usize,
         span: usize,
         start: VirtualAddress,
-        flags: FlagBuilder
-    ) -> Result<(), &str> {
-        todo!()
+        flags: FlagBuilder,
+    ) -> Result<VirtualAddress, &str> {
+        // start_addr is the address considering the gap
+        let start_addr = start - PAGE_SIZE;
+        // mapping addr is the real address of the mapping
+        let mapping_addr = start;
+        // no mapping to the first page
+        if mapping_addr < PAGE_SIZE {
+            return Err("can't map to the first page!");
+        }
+        // find the first mapping that mapping.addr > start
+        let mut index = 0;
+        // there are 2 cases here
+        // 1. find the mapping where mapping.addr > start
+        // 2. can't find the mapping where mapping.addr > start -> index = self.mappings.len()
+        for mapping in &self.mappings {
+            if mapping.addr > start_addr {
+                break;
+            }
+            index += 1;
+        }
+        // case 2: map to the tail
+        if index == self.mappings.len() {
+            // no overlap between the last mapping and the new mapping
+            let last = self.mappings.last().unwrap();
+            if last.addr + last.span < start_addr && start_addr + 2 * PAGE_SIZE + span < VADDR_MAX {
+                let new_mapping = MapEntry::new(source, offset, span, mapping_addr, flags);
+                self.mappings.push(new_mapping);
+                return Ok(mapping_addr);
+            }
+            return Err("not enough space or overlap!");
+        }
+        // case 1
+        else if index == 0{
+            if start_addr + 2 * PAGE_SIZE + span < self.mappings[0].addr {
+                let new_mapping = MapEntry::new(source, offset, span, mapping_addr, flags);
+                self.mappings.insert(0, new_mapping);
+                return Ok(mapping_addr);
+            }
+            return Err("not enough space!");
+        }
+        else {
+            let left_mapping = &self.mappings[index - 1];
+            let right_mapping = &self.mappings[index];
+            if left_mapping.addr + left_mapping.span < start_addr && start_addr + 2 * PAGE_SIZE + span < right_mapping.addr {
+                let new_mapping = MapEntry::new(source, offset, span, mapping_addr, flags);
+                self.mappings.insert(index, new_mapping);
+                return Ok(mapping_addr);
+            }
+            return Err("not enough space!");
+        }
     }
 
     /// Remove the mapping to `DataSource` that starts at the given address.
@@ -160,17 +218,21 @@ pub struct FlagBuilder {
 
 impl FlagBuilder {
     pub fn check_access_perms(&self, access_perms: FlagBuilder) -> bool {
-        if access_perms.read && !self.read || access_perms.write && !self.write || access_perms.execute && !self.execute {
+        if access_perms.read && !self.read
+            || access_perms.write && !self.write
+            || access_perms.execute && !self.execute
+        {
             return false;
-        }    
-        true    
+        }
+        true
     }
 
     pub fn is_valid(&self) -> bool {
         if self.private && self.shared {
             return false;
         }
-        if self.cow && self.write { // for COW to work, write needs to be off until after the copy
+        if self.cow && self.write {
+            // for COW to work, write needs to be off until after the copy
             return false;
         }
         return true;
