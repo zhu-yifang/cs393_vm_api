@@ -169,7 +169,20 @@ impl AddressSpace {
         source: Arc<D>,
         start: VirtualAddress,
     ) -> Result<(), &str> {
-        todo!()
+        // find the mapping that starts at start
+        let mut index = 0;
+        for mapping in &self.mappings {
+            if mapping.addr == start {
+                // check if the mapping is the same as the given source
+                if mapping.source == source {
+                    self.mappings.remove(index);
+                    return Ok(());
+                }
+                return Err("the mapping is not the same as the given source!");
+            }
+            index += 1;
+        }
+        Err("can't find the mapping!")
     }
 
     /// Look up the DataSource and offset within that DataSource for a
