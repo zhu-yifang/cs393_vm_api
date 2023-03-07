@@ -196,8 +196,21 @@ impl AddressSpace {
         addr: VirtualAddress,
         access_type: FlagBuilder,
     ) -> Result<(Arc<D>, usize), &str> {
-        todo!();
+        let mut index = 0;
+        for mapping in &self.mappings {
+            if addr >= mapping.addr && addr < mapping.addr + mapping.span {
+                // check if the access type is permitted
+                if mapping.flags.check_access_perms(access_type) {
+                    let offset = addr - mapping.addr + mapping.offset;
+                    return Ok(mapping.source, offset);
+                }
+                return Err("access type is not permitted!");
+            }
+            index += 1;
+        }
+        Err("can't find the mapping!")
     }
+
 
     /// Helper function for looking up mappings
     fn get_mapping_for_addr(&self, addr: VirtualAddress) -> Result<MapEntry, &str> {
